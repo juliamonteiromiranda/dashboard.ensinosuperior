@@ -1,3 +1,5 @@
+from pathlib import Path
+import unicodedata
 
 import pandas as pd
 import plotly.express as px
@@ -9,239 +11,330 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🎓 Dashboard do Ensino Superior")
-st.write(
-    "Veja quantas instituições de ensino superior existem "
-    "por estado, município e categoria no Brasil."
-)
+PASTA = Path(__file__).resolve().parent
+ARQUIVO_CSV = PASTA / "PDA_Lista_Instituicoes_Ensino_Superior_do_Brasil_EMEC.csv"
 
-st.sidebar.header("Sobre o projeto")
+st.sidebar.title("Sobre o projeto")
+st.sidebar.write("Turma: 2CDD01")
 st.sidebar.write("Fonte: Base de instituições de ensino superior do e-MEC.")
+st.sidebar.write("Desenvolvido com Python, Pandas, Plotly e Streamlit.")
 
-arquivo = st.file_uploader(
-    "Envie o arquivo CSV",
-    type=["csv"]
+st.title("🎓 Dashboard do Ensino Superior")
+st.header("Turma: 2CDD01")
+
+st.write("**Integrantes do grupo:**")
+st.markdown("""
+- Priscila Merces
+- Eloiza Dias
+- Julia Miranda
+- Ana Clara Luz
+""")
+
+st.divider()
+
+st.write(
+    "Este projeto apresenta uma análise de dados sobre as instituições "
+    "de ensino superior no Brasil, permitindo visualizar sua distribuição "
+    "por estado, município, categoria e situação."
 )
 
 
-def ler_csv(arquivo):
-    for codificacao in ["utf-8-sig", "cp1252", "latin1"]:
-        try:
-            arquivo.seek(0)
-            return pd.read_csv(
-                arquivo,
-                sep=None,
-                engine="python",
-                encoding=codificacao
-            )
-        except (UnicodeDecodeError, pd.errors.ParserError):
-            continue
-
-    raise ValueError("Não foi possível ler o arquivo CSV.")
+def normalizar_coluna(coluna):
+    texto = unicodedata.normalize("NFKD", str(coluna))
+    texto = texto.encode("ascii", "ignore").decode("ascii")
+    return texto.strip().upper().replace(" ", "_")
 
 
-if arquivo is None:
-    st.info("Envie o arquivo CSV para visualizar os gráficos.")
+def normalizar_texto(valor):
+    texto = unicodedata.normalize("NFKD", str(valor))
+    return texto.encode("ascii", "ignore").decode("ascii").strip().lower()
 
-else:
+
+def carregar_csv(caminho):
     try:
-        df = ler_csv(arquivo)
+        return pd.read_csv(
+            caminho,
+            sep=None,
+            engine="python",
+            encoding="utf-8"
+        )
+    except UnicodeDecodeError:
+        return pd.read_csv(
+            caminho,
+            sep=None,
+            engine="python",
+            encoding="latin-1"
+        )
 
-        df.columns = [
-            str(coluna).strip().replace("\ufeff", "")
-            for coluna in df.columns
-        ]
 
-        # Limpar espaços dos textos
-        for coluna in df.select_dtypes(include="object").columns:
-            df[coluna] = df[coluna].apply(
-                lambda valor: valor.strip()
-                if isinstance(valor, str)
-                else valor
-            )
+if not ARQUIVO_CSV.exists():
+    st.error(
+        "O arquivo CSV não foi encontrado. Coloque o arquivo "
+        "'PDA_Lista_Instituicoes_Ensino_Superior_do_Brasil_EMEC.csv' "
+        "na mesma pasta do strem.py."
+    )
+    st.stop()
 
-        st.subheader("📊 Informações gerais")
+try:
+    df = carregar_csv(ARQUIVO_CSV)
+except Exception as erro:
+    st.error(f"Não foi possível abrir o arquivo CSV: {erro}")
+    st.stop()
 
-        total_registros = len(df)
+df.columns = [normalizar_coluna(coluna) for coluna in df.columns]
+df = df.dropna(how="all")
 
-        if "CODIGO_DA_IES" in df.columns:
-            total_instituicoes = df["CODIGO_DA_IES"].nunique()
-        else:
-            total_instituicoes = total_registros
+st.success("Base de dados carregada automaticamente!")
+
+st.subheader("Visão geral dos dados")
+
+col1, col2 = st.columns(2)
+
+col1.metric(
+    "Total de registros",
+    f"{len(df):,}".replace(",", ".")
+)
+
+if "CODIGO_DA_IES" in df.columns:
+    total_instituicoes = df["CODIGO_DA_IES"].nunique()
+else:
+    total_instituicoes = len(df)
+
+col2.metric(
+    "Instituições identificadas",
+    f"{total_instituicoes:,}".replace(",", ".")
+)
+
+if "UF" in df.columns:
+    estados = df["UF"].dropna().astype(str).str.strip()
+    estados = estados[estados != ""]
+
+    if not estados.empty:
+        st.subheader("Quantidade de instituições por estado")
+
+        dados_estado = estados.value_counts().reset_index()
+        dados_estado.columns = ["Estado", "Quantidade"]
+
+        fig_estado = px.bar(
+            dados_estado,
+            x="Estado",
+            y="Quantidade",
+            title="Instituições de ensino superior por estado",
+            labels={
+                "Estado": "Estado",
+                "Quantidade": "Quantidade de registros"
+            }
+        )
+
+        st.plotly_chart(fig_estado, use_container_width=True)
+
+        st.write(
+            f"O estado com mais registros é **{dados_estado.iloc[0]['Estado']}**, "
+            f"com **{dados_estado.iloc[0]['Quantidade']}** registros."
+        )
+
+if "MUNICIPIO" in df.columns:
+    municipios = df["MUNICIPIO"].dropna().astype(str).str.strip()
+    municipios = municipios[municipios != ""]
+
+    if not municipios.empty:
+        st.subheader("Municípios com mais instituições")
+
+        dados_municipio = municipios.value_counts().head(10).reset_index()
+        dados_municipio.columns = ["Município", "Quantidade"]
+
+        fig_municipio = px.bar(
+            dados_municipio,
+            x="Quantidade",
+            y="Município",
+            orientation="h",
+            title="10 municípios com mais registros",
+            labels={
+                "Município": "Município",
+                "Quantidade": "Quantidade de registros"
+            }
+        )
+
+        fig_municipio.update_layout(
+            yaxis={"categoryorder": "total ascending"}
+        )
+
+        st.plotly_chart(fig_municipio, use_container_width=True)
+
+if "CATEGORIA_DA_IES" in df.columns:
+    categorias = df["CATEGORIA_DA_IES"].dropna().astype(str).str.strip()
+    categorias = categorias[categorias != ""]
+
+    if not categorias.empty:
+        st.subheader("Instituições por categoria")
+
+        dados_categoria = categorias.value_counts().reset_index()
+        dados_categoria.columns = ["Categoria", "Quantidade"]
+
+        fig_categoria = px.pie(
+            dados_categoria,
+            names="Categoria",
+            values="Quantidade",
+            title="Distribuição por categoria"
+        )
+
+        st.plotly_chart(fig_categoria, use_container_width=True)
+
+        st.write(
+            f"A categoria com mais registros é "
+            f"**{dados_categoria.iloc[0]['Categoria']}**, "
+            f"com **{dados_categoria.iloc[0]['Quantidade']}** registros."
+        )
+
+if "SITUACAO_IES" in df.columns:
+    situacoes = df["SITUACAO_IES"].dropna().astype(str).str.strip()
+
+    def classificar_situacao(valor):
+        texto = normalizar_texto(valor)
+
+        if "desativ" in texto or "extint" in texto or "encerrad" in texto:
+            return "Desativada"
+
+        if "ativ" in texto:
+            return "Ativa"
+
+        return None
+
+    df["SITUACAO_RESUMIDA"] = situacoes.reindex(df.index).map(classificar_situacao)
+
+    situacoes_resumidas = df["SITUACAO_RESUMIDA"].dropna()
+
+    if not situacoes_resumidas.empty:
+        st.subheader("Situação das instituições")
+
+        dados_situacao = (
+            situacoes_resumidas.value_counts()
+            .reindex(["Ativa", "Desativada"], fill_value=0)
+            .rename_axis("Situação")
+            .reset_index(name="Quantidade")
+        )
+
+        fig_situacao = px.bar(
+            dados_situacao,
+            x="Situação",
+            y="Quantidade",
+            color="Situação",
+            title="Instituições ativas e desativadas",
+            category_orders={"Situação": ["Ativa", "Desativada"]},
+            labels={
+                "Situação": "Situação",
+                "Quantidade": "Quantidade de instituições"
+            }
+        )
+
+        st.plotly_chart(fig_situacao, use_container_width=True)
+
+        total_ativas = int(
+            dados_situacao.loc[
+                dados_situacao["Situação"] == "Ativa", "Quantidade"
+            ].iloc[0]
+        )
+
+        total_desativadas = int(
+            dados_situacao.loc[
+                dados_situacao["Situação"] == "Desativada", "Quantidade"
+            ].iloc[0]
+        )
 
         col1, col2 = st.columns(2)
+        col1.metric("Ativas", f"{total_ativas:,}".replace(",", "."))
+        col2.metric("Desativadas", f"{total_desativadas:,}".replace(",", "."))
 
-        col1.metric("Registros na planilha", total_registros)
-        col2.metric("Códigos de instituições diferentes", total_instituicoes)
+st.divider()
 
-        # Considerar apenas instituições ativas, quando houver
-        dados = df.copy()
+st.header("Análise Detalhada dos Resultados")
 
-        if "SITUACAO_IES" in dados.columns:
-            situacoes = (
-                dados["SITUACAO_IES"]
-                .dropna()
-                .astype(str)
-                .str.strip()
-                .str.casefold()
-            )
+st.subheader("1. Qual informação aparece?")
+st.write(
+    f"A base contém {len(df)} registros relacionados às instituições "
+    "de ensino superior. Os gráficos mostram sua distribuição por estado, "
+    "município, categoria e situação."
+)
 
-            ativas = situacoes.isin(["ativa", "em atividade"])
+st.subheader("2. Qual é o maior valor?")
+if "UF" in df.columns and not df["UF"].dropna().empty:
+    contagem_estados = df["UF"].dropna().astype(str).str.strip().value_counts()
+    st.write(
+        f"O estado com mais registros é **{contagem_estados.index[0]}**, "
+        f"com **{contagem_estados.iloc[0]}** registros."
+    )
+else:
+    st.write("Não há dados de estado disponíveis para essa comparação.")
 
-            if ativas.any():
-                somente_ativas = st.checkbox(
-                    "Mostrar somente instituições ativas",
-                    value=True
-                )
+st.subheader("3. Existe algum valor muito diferente?")
+st.write(
+    "Os gráficos permitem identificar estados ou municípios com quantidades "
+    "maiores ou menores que as demais. Essa diferença não significa "
+    "necessariamente que exista um erro nos dados."
+)
 
-                if somente_ativas:
-                    dados = dados.loc[ativas].copy()
+st.subheader("4. Existe aumento ou diminuição?")
+st.write(
+    "A análise mostra principalmente a distribuição das instituições. "
+    "Para verificar aumento ou diminuição ao longo do tempo, seria necessário "
+    "comparar dados de diferentes anos."
+)
 
-        st.caption(
-            f"Os gráficos abaixo consideram {len(dados)} registros "
-            "após a aplicação dos filtros."
-        )
+st.subheader("5. Existem diferenças entre categorias?")
+if "CATEGORIA_DA_IES" in df.columns and not df["CATEGORIA_DA_IES"].dropna().empty:
+    contagem_categorias = (
+        df["CATEGORIA_DA_IES"].dropna().astype(str).str.strip().value_counts()
+    )
+    st.write(
+        f"Sim. A categoria mais frequente é **{contagem_categorias.index[0]}**, "
+        f"com {contagem_categorias.iloc[0]} registros."
+    )
+else:
+    st.write("Não foi possível comparar as categorias com os dados disponíveis.")
 
-        # Contar instituições diferentes
-        coluna_contagem = (
-            "CODIGO_DA_IES"
-            if "CODIGO_DA_IES" in dados.columns
-            else "NOME_DA_IES"
-        )
+st.subheader("6. Existe algum padrão aparente?")
+st.write(
+    "Os gráficos permitem comparar a distribuição dos registros entre estados, "
+    "municípios e categorias, ajudando a identificar padrões nos dados."
+)
 
-        if coluna_contagem not in dados.columns:
-            dados["_CONTAGEM"] = 1
-            coluna_contagem = "_CONTAGEM"
+st.subheader("7. Onde a Inteligência Artificial nos ajudou?")
+st.write(
+    "A Inteligência Artificial ajudou a organizar o código, identificar erros, "
+    "tratar os dados e criar gráficos para facilitar a interpretação dos resultados."
+)
 
-        # GRÁFICO 1: instituições por estado
-        st.divider()
-        st.subheader("🗺️ 1. Quantas instituições existem em cada estado?")
+st.divider()
 
-        if "UF" in dados.columns:
-            por_estado = (
-                dados.dropna(subset=["UF"])
-                .groupby("UF")[coluna_contagem]
-                .nunique()
-                .reset_index(name="Quantidade")
-                .sort_values("Quantidade", ascending=False)
-            )
+st.header("Sobre o Projeto")
 
-            fig1 = px.bar(
-                por_estado,
-                x="UF",
-                y="Quantidade",
-                text="Quantidade",
-                labels={
-                    "UF": "Estado",
-                    "Quantidade": "Número de instituições"
-                },
-                title="Instituições de ensino superior por estado"
-            )
+st.subheader("1. O que investigamos?")
+st.write(
+    "Investigamos como as instituições de ensino superior estão distribuídas "
+    "pelo Brasil, considerando estado, município, categoria e situação."
+)
 
-            fig1.update_traces(textposition="outside")
-            fig1.update_layout(showlegend=False)
+st.subheader("2. Qual base utilizamos?")
+st.write(
+    "Utilizamos uma base de dados de instituições de ensino superior "
+    "do e-MEC, sistema relacionado ao Ministério da Educação."
+)
 
-            st.plotly_chart(fig1, use_container_width=True)
+st.subheader("3. O que os dados mostraram?")
+st.write(
+    "Os dados permitem observar diferenças na distribuição dos registros "
+    "entre estados, municípios e categorias de instituições."
+)
 
-            st.write(
-                "Este gráfico mostra quantas instituições estão "
-                "cadastradas em cada estado. As barras mais altas "
-                "representam estados com mais instituições na base."
-            )
-        else:
-            st.warning("A coluna UF não foi encontrada.")
+st.subheader("4. Onde a Inteligência Artificial ajudou?")
 
-        # GRÁFICO 2: instituições por município
-        st.divider()
-        st.subheader("🏙️ 2. Quais municípios têm mais instituições?")
+st.markdown("""
+**Resolução de erros e estruturação:** ajudou a corrigir problemas no código.
 
-        if "MUNICIPIO" in dados.columns:
-            por_municipio = (
-                dados.dropna(subset=["MUNICIPIO"])
-                .groupby("MUNICIPIO")[coluna_contagem]
-                .nunique()
-                .reset_index(name="Quantidade")
-                .sort_values("Quantidade", ascending=False)
-                .head(10)
-            )
+**Limpeza e tratamento de dados:** ajudou a organizar as informações utilizadas na análise.
 
-            fig2 = px.bar(
-                por_municipio.sort_values("Quantidade"),
-                x="Quantidade",
-                y="MUNICIPIO",
-                orientation="h",
-                text="Quantidade",
-                labels={
-                    "MUNICIPIO": "Município",
-                    "Quantidade": "Número de instituições"
-                },
-                title="10 municípios com mais instituições"
-            )
+**Síntese de resultados:** ajudou a interpretar os gráficos e apresentar os resultados de forma mais simples.
+""")
 
-            fig2.update_traces(textposition="outside")
-            fig2.update_layout(showlegend=False)
-
-            st.plotly_chart(fig2, use_container_width=True)
-
-            st.write(
-                "Este gráfico apresenta os 10 municípios com mais "
-                "instituições cadastradas. Ele facilita a comparação "
-                "entre as cidades."
-            )
-        else:
-            st.warning("A coluna MUNICIPIO não foi encontrada.")
-
-        # GRÁFICO 3: instituições públicas e privadas
-        st.divider()
-        st.subheader("🏫 3. Instituições públicas e privadas")
-
-        if "CATEGORIA_DA_IES" in dados.columns:
-            por_categoria = (
-                dados.dropna(subset=["CATEGORIA_DA_IES"])
-                .groupby("CATEGORIA_DA_IES")[coluna_contagem]
-                .nunique()
-                .reset_index(name="Quantidade")
-                .sort_values("Quantidade", ascending=False)
-            )
-
-            fig3 = px.bar(
-                por_categoria,
-                x="CATEGORIA_DA_IES",
-                y="Quantidade",
-                text="Quantidade",
-                color="CATEGORIA_DA_IES",
-                labels={
-                    "CATEGORIA_DA_IES": "Categoria",
-                    "Quantidade": "Número de instituições"
-                },
-                title="Quantidade por categoria de instituição"
-            )
-
-            fig3.update_traces(textposition="outside")
-            fig3.update_layout(showlegend=False)
-
-            st.plotly_chart(fig3, use_container_width=True)
-
-            st.write(
-                "Este gráfico compara a quantidade de instituições "
-                "públicas e privadas cadastradas na base."
-            )
-        else:
-            st.warning("A coluna CATEGORIA_DA_IES não foi encontrada.")
-
-        # Tabela dos dados
-        st.divider()
-        st.subheader("📋 Dados da planilha")
-
-        st.dataframe(dados.head(20), use_container_width=True)
-
-        st.download_button(
-            "⬇️ Baixar dados analisados",
-            data=dados.to_csv(index=False).encode("utf-8-sig"),
-            file_name="dados_ensino_superior.csv",
-            mime="text/csv"
-        )
-
-    except Exception as erro:
-        st.error(f"Não foi possível analisar o arquivo: {erro}")
-
+with st.expander("Visualizar tabela de dados"):
+    st.dataframe(df, use_container_width=True)
